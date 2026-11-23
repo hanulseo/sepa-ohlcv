@@ -1,11 +1,28 @@
-# SEPA OHLCV Market Scanner
+# SEPA / Minervini Whole-Market Scanner
 
-Python-based US/KR daily OHLCV scanner and quantitative trend/relative-strength/VCP/volume/pivot scoring. No brokerage API key is required.
+Scheduled scans: 08:00 and 19:00 Asia/Seoul; GitHub may delay the execution.
 
-The repository is **public**. Do not commit portfolio positions, cost bases, API tokens, or other confidential information.
+## Exchanges
+- United States: NASDAQ, NYSE, AMEX exchange listings via FinanceDataReader
+- Republic of Korea: KOSPI and KOSDAQ listings via FinanceDataReader
+- Exchange listings are partitioned into 16 parallel GitHub Actions jobs.
+- All eligible listed symbols are attempted; some providers may refuse or omit symbols.
+- ETF, ETN, warrants, and special instrument exclusion is heuristic and subject to verification.
 
-Once the workflow is installed, open **Actions → SEPA Market Scan → Run workflow**. Download its `sepa-analysis` artifact to inspect `report.json`, `scores.csv`, and available OHLCV CSVs.
+## Reports (download sepa-whole-market from the Actions run)
+- report.md: Company name (ticker), including Korean company names, US top six / KR top four
+- full_universe.csv: listing of discovered securities
+- coverage.csv: per-security retrieval outcomes, failures, and exclusions
+- coverage_summary.json: actual total listed, attempted, scored and all-shard completion
+- all_scores.csv: scored securities, ranked across both markets
+- top10.csv: the high-scoring ten with company names
+- all_approved.csv: quantitative buy-screen positives, not independent chart confirmation
 
-The scheduled times are 08:00 / 19:00 Asia/Seoul (23:00 / 10:00 UTC). GitHub scheduled runs may be delayed.
-
-Scores are computed only from actual retrieved OHLCV; incomplete verification never results in BUY NOW or BUY WAIT. The scanner is a technical research tool, not a trade execution service.
+## Data and privacy
+- Price history: yfinance and fallback FinanceDataReader; benchmarks S&P 500, KOSPI, KOSDAQ.
+- 20+ session short-history proxy is differentiated from a 200-day trend score.
+- 252 observed sessions are needed for verified 52-week low +100%; unavailable gates block BUY.
+- VCP is a computed proxy, not discretionary pattern verification.
+- This repository is PUBLIC. Do not commit personal positions, cost basis or API secrets.
+- A successful GitHub job alone is not proof that every listed security was successfully scored. Consult the coverage report.
+- SEC/DART financials and retrospective recommendation checking are not included yet.
