@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 from src.score import normalize, score_one
+from src.feedback import detect_moves
 
 LOG=logging.getLogger("full_market")
 logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s")
@@ -127,7 +128,7 @@ def main():
     chosen=listing[[shard_of(r.region,r.symbol,args.shards)==args.shard for r in listing.itertuples()]].copy()
     chosen.to_csv(out/"universe.csv",index=False,encoding="utf-8-sig")
     b=benchmarks()
-    scores=[];coverage=[]
+    scores=[];coverage=[];feedback=[]
     elig=chosen[chosen.screen_eligible].to_dict("records")
     for _,r in chosen[~chosen.screen_eligible].iterrows():
         coverage.append({**r.to_dict(),"status":"excluded_security_class","bars":0,"source":""})
@@ -148,6 +149,10 @@ def main():
                 coverage.append({**r,"status":"missing_benchmark","bars":len(f),"source":source})
                 continue
             try:
+                feedback.extend(detect_moves(r["symbol"],r["name"],r["region"],r["exchange"],f,b[key]))
+            except Exception as e:
+                LOG.warning("Feedback events %s failed: %s",sym,str(e)[:150])
+            try:
                 rec=score_one(r["symbol"],r["region"],f,b[key],percentile=None)
                 if rec is None:
                     coverage.append({**r,"status":"insufficient_aligned_history","bars":len(f),"source":source})
@@ -163,6 +168,7 @@ def main():
         LOG.info("shard=%d progress=%d/%d scored=%d",args.shard,min(off+40,len(elig)),len(elig),len(scores))
     pd.DataFrame(coverage).to_csv(out/"coverage.csv",index=False,encoding="utf-8-sig")
     pd.DataFrame(scores).to_csv(out/"scores.csv",index=False,encoding="utf-8-sig")
+    pd.DataFrame(feedback,columns=["market","exchange","ticker","company_name","date","close","one_day_return_pct","previous_20_day_high","new_20day_high","new_52week_high","volume_ratio_20d","index_one_day_return_pct","trigger"]).to_csv(out/"recent_events.csv",index=False,encoding="utf-8-sig")
     meta={"shard":args.shard,"shards":args.shards,"listed":len(chosen),
           "eligible":len(elig),"scored":len(scores),"listing_errors":failed,
           "benchmarks":sorted(b),"complete_listing":not bool(failed)}
