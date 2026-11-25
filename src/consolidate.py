@@ -25,6 +25,7 @@ def main():
     universe,ufiles=read_all(root,"universe.csv")
     coverage,cfiles=read_all(root,"coverage.csv")
     scores,sfiles=read_all(root,"scores.csv")
+    events,efiles=read_all(root,"recent_events.csv")
     metas=[]
     for path in root.glob("shard_*/meta.json"):
         try: metas.append(json.loads(path.read_text()))
@@ -70,6 +71,21 @@ def main():
     top.to_csv(out/"top10.csv",index=False,encoding="utf-8-sig")
     approved=scores[scores.status.isin(["BUY NOW","BUY WAIT"])] if not scores.empty else pd.DataFrame()
     approved.to_csv(out/"all_approved.csv",index=False,encoding="utf-8-sig")
+    # Retrospective: flag recent events absent from the top-10 table, not
+    # alleged missed BUY recommendations. Event OHLCV is the underlying evidence.
+    if not events.empty:
+        events["ticker"]=events.ticker.astype(str).str.replace(r"\\.0$","",regex=True)
+        events.loc[events.market=="KR","ticker"]=events.loc[events.market=="KR","ticker"].str.zfill(6)
+        events=events.drop_duplicates(["market","ticker","date"])
+        top_set=set(zip(top.market,top.ticker)) if not top.empty else set()
+        events["included_in_top10"]=events.apply(
+            lambda r:(r.market,r.ticker) in top_set,axis=1)
+        events["potentially_missed_from_top10"]=~events["included_in_top10"]
+        events=events.sort_values(["date","new_52week_high","one_day_return_pct"],
+                                  ascending=[False,False,False])
+    events.to_csv(out/"recent_5session_events.csv",index=False,encoding="utf-8-sig")
+    misses=events[events.potentially_missed_from_top10] if not events.empty else pd.DataFrame()
+    misses.head(50).to_csv(out/"recent_5session_missed_top50.csv",index=False,encoding="utf-8-sig")
     counts=coverage.status.value_counts().to_dict() if not coverage.empty else {}
     report={"generated_kst":datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
             "exchange_scope":["NASDAQ","NYSE","AMEX","KOSPI","KOSDAQ"],
@@ -81,6 +97,7 @@ def main():
             "coverage_status_counts":{str(k):int(v) for k,v in counts.items()},
             "fully_processed_listing":complete_shards and not listing_errors and len(universe)==len(coverage),
             "eligible_buy_signals":int(len(approved)),
+            "recent_events":int(len(events)),"recent_events_not_in_top10":int(len(misses)),
             "qualification":"Every available listing ticker attempted, not all successfully priced. ETF/security-class filtering heuristic; fundamentals not covered.",
             "top10":top[["market","company_name","ticker","exchange","total100","trend30","rs20","vcp20","leading20","pivot10","bars","date","status"]].to_dict("records") if not top.empty else []}
     (out/"coverage_summary.json").write_text(json.dumps(report,indent=2,ensure_ascii=False,default=str),encoding="utf-8")
@@ -99,6 +116,18 @@ def main():
     t+=["","## Coverage outcomes",""]
     for key,val in counts.items(): t.append(f"- {key}: {val:,}")
     t+=["","Important: 52w_low_plus_100 requires 252 sessions; insufficient history blocks BUY. Scored does not mean SEPA gates are passed."]
+    t+=["","## 사후피드백 — 최근 5거래일 급등·신고가 누락 추적","",
+        f"- OHLCV 검출 신호 {len(events):,}건 / 상위 10종목에 포함되지 않은 신호 {len(misses):,}건.",
+        "- 누락은 상위 10종목 표 미포함을 뜻하며 당시 실제 매수 가능했다는 의미가 아님.",
+        "- 각 종목은 발생일 종가·일간 수익률·20거래일 평균 대비 거래량·52주 신고가 여부로 정렬함.","",
+        "|기업명 (티커)|발생일|당일 수익률|거래량/20일|52주 신고가|",
+        "|---|---|---:|---:|---|"]
+    for _,e in misses.head(12).iterrows():
+        t.append(f"|{e.company_name} ({e.ticker})|{e.date}|{float(e.one_day_return_pct):+.2f}%|{float(e.volume_ratio_20d):.2f}배|{'예' if e.new_52week_high else '아니오'}|")
+    t+=["","## 과거 추천 로그 검증","",
+        "- FCX·FIVE·ERO·SHOP·FEIM·FTNT·GNRC·TWST·CRWD: 당시 추천 날짜·가격·추천 사유의 검증된 원본 로그가 현재 저장소에 없어 수익률 산정 불가.",
+        "- 추천 시점이 확인되지 않은 종목에 임의 진입가격·수익률을 부여하지 않음.",
+        "- 앞으로 추천시점과 기준가격을 기록하고 이후 실제 일봉과 대조하도록 추천 로그 구조를 유지함."]
     (out/"report.md").write_text("\n".join(t),encoding="utf-8")
     LOG.info("Coverage summary: %s",json.dumps({k:v for k,v in report.items() if k!="top10"},ensure_ascii=False))
     if not report["fully_processed_listing"] or scores.empty:
